@@ -642,6 +642,21 @@ open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
         super.onDestroy()
     }
 
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (capturePreviewLayout.isVisible) {
+            mainLayout.isFocusableInTouchMode = false
+            mainLayout.isFocusable = false
+        } else if (event.keyCode == KeyEvent.KEYCODE_ENTER ||
+            event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+        ) {
+            // Keep capture controls from consuming the shutter key.
+            mainLayout.isFocusableInTouchMode = true
+            mainLayout.requestFocus()
+        }
+
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?) = when (capturePreviewLayout.isVisible) {
         true -> super.onKeyDown(keyCode, event)
         false -> handleHardwareKeyDown(keyCode, event) ?: super.onKeyDown(keyCode, event)
@@ -1941,16 +1956,32 @@ open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
         }
     }
 
-    private fun handleHardwareKeyDown(
-        keyCode: Int, event: KeyEvent?
-    ) = HardwareKey.match(keyCode)?.let { (hardwareKey, tempIncrease) ->
-        val increase = when (viewModel.getHardwareKeyInvert(hardwareKey)) {
-            true -> !tempIncrease
-            false -> tempIncrease
+    private fun matchHardwareKey(keyCode: Int, event: KeyEvent?) = when {
+        keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_DPAD_CENTER -> {
+            Triple(HardwareKey.CAMERA, true, GestureAction.SHUTTER)
         }
 
-        val gestureAction = viewModel.getHardwareKeyAction(hardwareKey)
+        event?.isCtrlPressed == true && keyCode == KeyEvent.KEYCODE_EQUALS -> {
+            Triple(HardwareKey.ZOOM, true, GestureAction.ZOOM)
+        }
 
+        event?.isCtrlPressed == true && keyCode == KeyEvent.KEYCODE_MINUS -> {
+            Triple(HardwareKey.ZOOM, false, GestureAction.ZOOM)
+        }
+
+        else -> HardwareKey.match(keyCode)?.let { (hardwareKey, tempIncrease) ->
+            val increase = when (viewModel.getHardwareKeyInvert(hardwareKey)) {
+                true -> !tempIncrease
+                false -> tempIncrease
+            }
+
+            Triple(hardwareKey, increase, viewModel.getHardwareKeyAction(hardwareKey))
+        }
+    }
+
+    private fun handleHardwareKeyDown(
+        keyCode: Int, event: KeyEvent?
+    ) = matchHardwareKey(keyCode, event)?.let { (hardwareKey, increase, gestureAction) ->
         if (gestureAction.isTwoWayAction && !hardwareKey.isTwoWayKey) {
             Log.wtf(
                 LOG_TAG,
@@ -1961,7 +1992,9 @@ open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
 
         when (gestureAction) {
             GestureAction.SHUTTER -> {
-                if (viewModel.cameraMode.value == CameraMode.VIDEO
+                // Enter and center activate on key up, including in video mode.
+                if (keyCode != KeyEvent.KEYCODE_ENTER && keyCode != KeyEvent.KEYCODE_DPAD_CENTER
+                    && viewModel.cameraMode.value == CameraMode.VIDEO
                     && viewModel.isShutterButtonEnabled.value
                     && event?.repeatCount == 0
                 ) {
@@ -2016,9 +2049,7 @@ open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
 
     private fun handleHardwareKeyUp(
         keyCode: Int, event: KeyEvent?
-    ) = HardwareKey.match(keyCode)?.let { (hardwareKey, _) ->
-        val gestureAction = viewModel.getHardwareKeyAction(hardwareKey)
-
+    ) = matchHardwareKey(keyCode, event)?.let { (hardwareKey, _, gestureAction) ->
         if (gestureAction.isTwoWayAction && !hardwareKey.isTwoWayKey) {
             Log.wtf(
                 LOG_TAG,
